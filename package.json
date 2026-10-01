@@ -1,12 +1,11 @@
 {
-  "name": "nexo-ai-api",
-  "version": "2.0.0",
-  "description": "AI API server untuk NEXO - memanggil Groq langsung, tanpa proxy lokal",
-  "main": "server.js",
+  "name": "nexo-ai-relay",
+  "version": "3.0.0",
+  "description": "AI Relay di Vercel Edge - sembunyikan IP dari provider AI",
+  "main": "api/index.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "STANDALONE=1 node server.js"
+    "dev": "vercel dev"
   },
   "engines": {
     "node": ">=18.0.0"
