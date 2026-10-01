@@ -1,36 +1,28 @@
-# NEXO API Proxy
+# NEXO AI API
 
-Server proxy sederhana yang meneruskan request AI dari Vercel ke 9router lokal.
+Server AI yang bisa di-deploy ke Vercel. Memanggil Groq API langsung — tanpa perlu 9router lokal.
 
-## Cara Kerja
+## Deploy ke Vercel
 
+1. Import repo ini di Vercel
+2. Set **Framework**: Other
+3. Set **Build Command**: (kosongkan)
+4. Set **Output Directory**: (kosongkan)
+5. Tambah environment variable: `GROQ_API_KEY`
+6. Deploy
+
+## Setelah Deploy
+
+Di project NEXO (nexogames.site), set:
 ```
-Vercel -> https://api-kamu.com/v1/chat/completions
-       -> server.js -> http://localhost:20128/v1/chat/completions
-       -> 9router -> Gemini/Groq/dll
+AI_BASE_URL = https://urlrouter.vercel.app/v1
+AI_API_KEY = <kunci_Groq_sama_dengan_Vercel_NEXO>
+AI_MODEL = openai/gpt-oss-120b
 ```
 
-## Cara Pakai
+## Testing Lokal
 
 ```bash
-npm install    # tanpa dependensi - pakai Node.js built-in
-node server.js
+GROQ_API_KEY="gsk_..." STANDALONE=1 node server.js
+# Buka http://localhost:3001/health
 ```
-
-## Environment Variables
-
-| Variabel | Default | Keterangan |
-|---|---|---|
-| PORT | 3001 | Port server proxy |
-| TARGET_URL | http://localhost:20128/v1 | URL 9router lokal |
-| ALLOWED_ORIGIN | https://nexogames.site | Origin yang boleh akses |
-
-## Hosting
-
-Server ini bisa di-host di:
-- **VPS** (DigitalOcean, Linode, dsb)
-- **Railway** (gratis tier tersedia)
-- **Render** (gratis tier tersedia)
-- **Fly.io** (gratis tier tersedia)
-
-Semua platform yang mendukung Node.js bisa menjalankan server ini.

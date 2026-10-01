@@ -1,96 +1,119 @@
 // ==========================================
-// NEXO API Proxy
+// NEXO AI API Server
 // ==========================================
 //
-// Server sederhana yang meneruskan request AI ke 9router lokal.
-// Dipakai supaya Vercel (cloud) bisa mengakses AI provider yang hanya
-// berjalan di komputer lokal (localhost:20128).
-//
-// CARA KERJA:
-//   Vercel -> https://api.kamu.com/v1/chat/completions
-//            -> server.js -> http://localhost:20128/v1/chat/completions
-//            -> 9router -> Gemini/Groq/dll
-//
-// CARA JALAN:
-//   npm install  (tanpa dependensi - pakai Node.js built-in)
-//   node server.js
+// Server AI yang bisa di-deploy ke Vercel (serverless) atau Node.js biasa.
+// Memanggil Groq API langsung - tidak perlu 9router lokal.
 //
 // ENVIRONMENT:
-//   PORT           - port server ini (default: 3001)
-//   TARGET_URL     - URL 9router lokal (default: http://localhost:20128/v1)
-//   ALLOWED_ORIGIN - origin yang boleh akses (default: https://nexogames.site)
+//   GROQ_API_KEY    - kunci Groq (bisa multi dipisah koma)
+//   GROQ_MODEL      - model Groq (default: openai/gpt-oss-120b)
+//   AI_MAX_TOKENS   - batas output token (default: 2000)
 
-const http = require('node:http');
-const https = require('node:https');
-const { URL } = require('node:url');
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-const PORT = parseInt(process.env.PORT, 10) || 3001;
-const TARGET = (process.env.TARGET_URL || 'http://localhost:20128/v1').replace(/\/+$/, '');
-const ALLOWED = (process.env.ALLOWED_ORIGIN || 'https://nexogames.site')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function corsHeaders(req) {
-  const origin = req.headers.origin || '';
-  const izin = ALLOWED.includes(origin) || ALLOWED.includes('*');
-  return {
-    'Access-Control-Allow-Origin': izin ? origin : ALLOWED[0] || '*',
-    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Max-Age': '86400',
-  };
+function daftarKunci() {
+  return (process.env.GROQ_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 }
 
-const server = http.createServer((req, res) => {
-  // Preflight CORS
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, corsHeaders(req));
-    return res.end();
-  }
+function modelAI() {
+  return process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+}
 
-  // Health check
+function maksToken() {
+  const n = parseInt(process.env.AI_MAX_TOKENS || process.env.GROQ_MAX_TOKENS, 10);
+  return Number.isFinite(n) && n > 0 ? n : 2000;
+}
+
+function bersihkanPesan(teks) {
+  let out = String(teks || '');
+  for (const k of daftarKunci()) {
+    if (k) out = out.split(k).join('[kunci-disembunyikan]');
+  }
+  return out.replace(/gsk_[A-Za-z0-9]{20,}/g, '[kunci-disembunyikan]');
+}
+
+async function tanyaAI(pesan) {
+  const kunci = daftarKunci();
+  if (!kunci.length) return { ok: false, error: 'GROQ_API_KEY belum diisi.' };
+
+  for (let i = 0; i < kunci.length; i++) {
+    try {
+      const res = await fetch(GROQ_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${kunci[i]}` },
+        body: JSON.stringify({
+          model: modelAI(),
+          messages: pesan,
+          max_tokens: maksToken(),
+          temperature: 0.4,
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const teks = data?.choices?.[0]?.message?.content;
+        if (teks) return { ok: true, teks, kunciDipakai: i + 1 };
+        return { ok: false, error: 'AI mengirim balasan kosong.' };
+      }
+
+      let pesanErr = '';
+      try { const j = await res.json(); pesanErr = j?.error?.message || JSON.stringify(j); } catch { pesanErr = ''; }
+
+      const kode = res.status;
+      let rangkai = pesanErr || ('HTTP ' + kode);
+      if (/too large|TPM|tokens per minute/i.test(rangkai)) {
+        rangkai = 'Data terlalu panjang untuk batas kuota. Coba lagi sebentar.';
+      } else if (kode === 403) {
+        rangkai += ' [kunci ditolak atau nama MODEL salah]';
+      } else if (kode === 401) {
+        rangkai += ' [kunci ditolak]';
+      } else if (kode === 429) {
+        rangkai += ' [kuota kunci ini habis]';
+      }
+      if (kode === 400 || kode === 404) break;
+    } catch (e) {
+      return { ok: false, error: e?.name === 'TimeoutError' ? 'Timeout 60 detik' : bersihkanPesan(e?.message || e) };
+    }
+  }
+  return { ok: false, error: 'Semua kunci dicoba, tidak ada yang berhasil.' };
+}
+
+// Handler utama - mendukung Vercel serverless (export) dan Node.js biasa
+export default async function handler(req, res) {
+  // CORS
+  const origin = req.headers.origin || '';
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.url === '/health' || req.url === '/') {
-    res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders(req) });
-    return res.end(JSON.stringify({ ok: true, service: 'nexo-api-proxy', target: TARGET }));
+    return res.json({ ok: true, service: 'nexo-ai', model: modelAI(), kunci: daftarKunci().length });
+  }
+  if (req.method !== 'POST' || !req.url.includes('chat/completions')) {
+    return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
 
-  // Proxy request ke 9router
-  const targetUrl = new URL(TARGET + req.url);
-  const isHttps = targetUrl.protocol === 'https:';
-  const modul = isHttps ? https : http;
+  let body;
+  try { body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body; } catch { body = null; }
+  if (!body?.messages) return res.status(400).json({ ok: false, error: 'messages wajib diisi.' });
 
-  const headers = { ...req.headers };
-  delete headers.host; // supaya 9router menerima request dengan benar
-  delete headers['content-length']; // biar proxy yang set ulang
+  const hasil = await tanyaAI(body.messages);
+  return res.status(hasil.ok ? 200 : 502).json(hasil);
+}
 
-  const options = {
-    hostname: targetUrl.hostname,
-    port: targetUrl.port || (isHttps ? 443 : 80),
-    path: targetUrl.pathname + targetUrl.search,
-    method: req.method,
-    headers,
-  };
-
-  const proxyReq = modul.request(options, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, { ...proxyRes.headers, ...corsHeaders(req) });
-    proxyRes.pipe(res);
+// Node.js standalone mode (untuk testing lokal)
+if (process.env.STANDALONE === '1') {
+  const http = require('node:http');
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      req.body = Buffer.concat(chunks).toString();
+      handler(req, res);
+    });
   });
-
-  proxyReq.on('error', (e) => {
-    console.error('[PROXY] Gagal:', e.message);
-    res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders(req) });
-    res.end(JSON.stringify({ ok: false, error: 'Gagal menghubungi AI provider. Pastikan 9router berjalan.' }));
-  });
-
-  req.pipe(proxyReq);
-});
-
-server.listen(PORT, () => {
-  console.log(`[PROXY] Berjalan di port ${PORT}`);
-  console.log(`[PROXY] Target: ${TARGET}`);
-  console.log(`[PROXY] Allowed origins: ${ALLOWED.join(', ')}`);
-  console.log('');
-  console.log('Contoh penggunaan dari Vercel:');
-  console.log(`  AI_BASE_URL = https://api-kamu.com/v1`);
-});
+  server.listen(3001, () => console.log('Standalone di port 3001'));
+}
