@@ -41,10 +41,6 @@ function bersihkanPesan(teks) {
   return out.replace(/gsk_[A-Za-z0-9]{20,}/g, '[redacted]');
 }
 
-export const config = {
-  runtime: 'edge',
-};
-
 export default async function handler(request) {
   const url = new URL(request.url);
 
